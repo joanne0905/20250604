@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <title>手指數學遊戲</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: 'Segoe UI', sans-serif;
+      background-color: #1b1b2f;
+      color: white;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      overflow: hidden;
+    }
+    canvas {
+      margin-top: 10px;
+    }
+    #game-info {
+      margin-top: 10px;
+      font-size: 18px;
+    }
+    #question {
+      font-size: 28px;
+      margin-top: 10px;
+      font-weight: bold;
+    }
+    #feedback {
+      font-size: 22px;
+      margin-top: 10px;
+      height: 28px;
+    }
+    #restartBtn {
+      margin-top: 15px;
+      padding: 10px 20px;
+      font-size: 18px;
+      border: none;
+      border-radius: 8px;
+      background-color: #00ffb7;
+      color: #000;
+      cursor: pointer;
+      display: none;
+    }
+    #restartBtn:hover {
+      background-color: #00e0a7;
+    }
+  </style>
+</head>
+<body>
+  <div id="game-info">得分: <span id="score">0</span> | 時間: <span id="time">60</span></div>
+  <div id="question">載入中...</div>
+  <div id="feedback"></div>
+  <button id="restartBtn">重新開始</button>
+
+  <!-- p5.js -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.6.0/p5.min.js"></script>
+  <!-- TensorFlow & ml5.js（請使用舊版以避免不相容） -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.20.0/dist/tf.min.js"></script>
+  <script src="https://unpkg.com/ml5@0.11.0/dist/ml5.min.js"></script>
+
+  <script>
+    let handposeModel;
+    let video;
+    let predictions = [];
+    let indexTip = null;
+
+    const targetRadius = 50;
+    let targets = [];
+    let score = 0;
+    let timeLeft = 60;
+    let timerInterval;
+    let gameActive = false;
+
+    const infoScore = document.getElementById('score');
+    const infoTime = document.getElementById('time');
+    const questionEl = document.getElementById('question');
+    const feedbackEl = document.getElementById('feedback');
+    const restartBtn = document.getElementById('restartBtn');
+
+    restartBtn.addEventListener('click', () => {
+      resetGame();
+    });
+
+    function setup() {
+      const canvas = createCanvas(700, 480);
+      canvas.parent(document.body);
+
+      video = createCapture(VIDEO);
+      video.size(width, height);
+      video.hide();
+
+      handposeModel = ml5.handpose(video, modelReady);
+      handposeModel.on('predict', results => {
+        predictions = results;
+      });
+
+      textFont('Segoe UI');
+      textAlign(CENTER, CENTER);
+
+      resetGame();
+    }
+
+    function modelReady() {
+      console.log('Handpose 模型載入完成');
+      startGame();
+    }
+
+    function startGame() {
+      score = 0;
+      timeLeft = 60;
+      gameActive = true;
+      updateScore();
+      updateTime();
+      feedbackEl.textContent = '';
+      restartBtn.style.display = 'none';
+      prepareQuestion();
+
+      if (timerInterval) clearInterval(timerInterval);
+      timerInterval = setInterval(() => {
+        if (!gameActive) return;
+        timeLeft--;
+        updateTime();
+        if (timeLeft <= 0) {
+          gameOver();
+        }
+      }, 1000);
+    }
+
+    function updateScore() {
+      infoScore.textContent = score;
+    }
+
+    function updateTime() {
+      infoTime.textContent = timeLeft;
+    }
+
+    function gameOver() {
+      gameActive = false;
+      feedbackEl.textContent = "";
+      questionEl.textContent = `遊戲結束！你的分數：${score}`;
+      restartBtn.style.display = 'block';
+    }
+
+    function resetGame() {
+      score = 0;
+      timeLeft = 60;
+      gameActive = false;
+      feedbackEl.textContent = '';
+      questionEl.textContent = '載入中...';
+      restartBtn.style.display = 'none';
+      targets = [];
+      updateScore();
+      updateTime();
+      if (handposeModel) {
+        startGame();
+      }
+    }
+
+    function prepareQuestion() {
+      const a = floor(random(1, 20));
+      const b = floor(random(1, 20));
+      const correctAnswer = a + b;
+      questionEl.textContent = `${a} + ${b} = ?`;
+
+      let answers = new Set();
+      answers.add(correctAnswer);
+      while (answers.size < 4) {
+        let wrong = correctAnswer + floor(random(-10, 11));
+        if (wrong > 0) answers.add(wrong);
+      }
+
+      let answerArray = Array.from(answers);
+      shuffleArray(answerArray);
+
+      targets = [];
+      let posY = height - 90;
+      let spacing = width / (answerArray.length + 1);
+      for (let i = 0; i < answerArray.length; i++) {
+        let posX = spacing * (i + 1);
+        targets.push({
+          pos: createVector(posX, posY),
+          value: answerArray[i],
+          isCorrect: answerArray[i] === correctAnswer
+        });
+      }
+    }
+
+    function shuffleArray(arr) {
+      for (let i = arr.length - 1; i > 0; i--) {
+        let j = floor(random(i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+      }
+    }
+
+    function draw() {
+      background(27, 27, 47);
+
+      push();
+      translate(width, 0);
+      scale(-1, 1);
+      tint(255, 100);
+      image(video, 0, 0, width, height);
+      pop();
+
+      for (let t of targets) {
+        drawAnswerTarget(t.pos.x, t.pos.y, targetRadius, t.value);
+      }
+
+      if (predictions.length > 0) {
+        const hand = predictions[0];
+        const tip = hand.landmarks[8];
+        const x = width - tip[0];
+        const y = tip[1];
+        indexTip = createVector(x, y);
+
+        stroke(0, 255, 180);
+        strokeWeight(3);
+        fill(0, 255, 180, 220);
+        ellipse(indexTip.x, indexTip.y, 30, 30);
+
+        let glowRadius = 38 + 8 * sin(frameCount * 0.18);
+        noFill();
+        stroke(0, 255, 180, 160);
+        strokeWeight(2);
+        ellipse(indexTip.x, indexTip.y, glowRadius, glowRadius);
+
+        if (gameActive) {
+          checkAnswerSelection();
+        }
+      } else {
+        indexTip = null;
+      }
+    }
+
+    function drawAnswerTarget(x, y, r, value) {
+      noFill();
+      for (let i = 4; i >= 1; i--) {
+        strokeWeight(i * 7);
+        stroke(0, 255, 180, 20 / i);
+        ellipse(x, y, r * 2 + i * 14, r * 2 + i * 14);
+      }
+      noStroke();
+      fill(0, 255, 180);
+      ellipse(x, y, r * 1.8, r * 1.8);
+      fill(5, 160, 130);
+      ellipse(x, y, r * 1.0, r * 1.0);
+
+      noStroke();
+      fill(255);
+      textSize(30);
+      text(value, x, y + 2);
+    }
+
+    let selectionCooldown = false;
+
+    function checkAnswerSelection() {
+      if (!indexTip || selectionCooldown) return;
+
+      for (let t of targets) {
+        let d = dist(indexTip.x, indexTip.y, t.pos.x, t.pos.y);
+        if (d < targetRadius + 15) {
+          if (t.isCorrect) {
+            score++;
+            updateScore();
+            feedbackEl.style.color = '#00ffb7';
+            feedbackEl.textContent = '答對了！🎉';
+          } else {
+            feedbackEl.style.color = '#ff6b6b';
+            feedbackEl.textContent = '再試一次！❌';
+          }
+          selectionCooldown = true;
+          setTimeout(() => {
+            feedbackEl.textContent = '';
+            if (t.isCorrect) {
+              prepareQuestion();
+            }
+            selectionCooldown = false;
+          }, 1200);
+          break;
+        }
+      }
+    }
+  </script>
+</body>
+</html>
